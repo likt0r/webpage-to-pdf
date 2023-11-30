@@ -9,7 +9,7 @@ const fs = require("fs");
 const { PDFDocument } = require("pdf-lib");
 const urlMap = {};
 
-let scrapeLimit = 100;
+let scrapeLimit = 20;
 let downloadLimit = 10;
 let outputDir = "./output";
 let outputFileName = "output.pdf";
@@ -18,6 +18,8 @@ let maxDepth = 0;
 let runningScraperCounter = 0;
 let scrapeUrlQueue = [];
 let workingUrls = [];
+let keepTemp = false;
+let inflate = false;
 function sleep(time) {
   return new Promise((resolve) => setTimeout(resolve, time));
 }
@@ -33,10 +35,13 @@ function ensureDirectoryExists(dirPath) {
 
 async function startScrape(url) {
   console.log(`Starting scrape of ${url}`);
+
   scrapeUrlQueue.push(url);
+  urlMap[url] = true;
   while (scrapeUrlQueue.length > 0 || runningScraperCounter > 0) {
     if (runningScraperCounter < scrapeLimit && scrapeUrlQueue.length > 0) {
       url = scrapeUrlQueue.shift();
+      console.log(`Scraping ${url}`);
       scrapeUrl(url);
     } else {
       await sleep(100);
@@ -51,18 +56,32 @@ async function startScrape(url) {
 async function scrapeUrl(url) {
   runningScraperCounter++;
   let htmlContent = "";
+  let $ = "";
   try {
-    const { data } = await axios.get(url);
-    htmlContent = data;
-    workingUrls.push(url);
-    const $ = cheerio.load(htmlContent);
+    if (inflate) {
+      const browser = await puppeteer.launch({ headless: "new" });
+      const page = await browser.newPage();
+      await page.goto(url, { waitUntil: "networkidle2" });
+
+      htmlContent = await page.content();
+      await browser.close();
+      $ = cheerio.load(htmlContent);
+      workingUrls.push(url);
+    } else {
+      const { data } = await axios.get(url);
+      htmlContent = data;
+      workingUrls.push(url);
+
+      $ = cheerio.load(htmlContent);
+    }
+
     const links = [];
 
     $("a[href]").each((_, element) => {
       // console.log(`Found link ${$(element).attr("href")}`);
 
       noAnchor = $(element).attr("href").split("#")[0];
-      console.log(noAnchor);
+
       if (!noAnchor) {
         return;
       }
@@ -105,7 +124,7 @@ function urlToFilename(url) {
 }
 
 const convertToPdf = async (url, index) => {
-  const browser = await puppeteer.launch();
+  const browser = await puppeteer.launch({ headless: "new" });
   const page = await browser.newPage();
   await page.goto(url, { waitUntil: "networkidle2" });
   const pdfName = path.join(outputDir, `output_${urlToFilename(url)}.pdf`);
@@ -126,15 +145,35 @@ async function mergePdfs(pdfFiles) {
 
   const mergedPdfBytes = await mergedPdf.save();
   fs.writeFileSync(outputFileName, mergedPdfBytes);
-  // delete individual pdfs
-  // for (const pdfFile of pdfFiles) {
-  //   fs.unlinkSync(pdfFile);
-  // }
+  if (!keepTemp) {
+    // delete individual pdfs
+    for (const pdfFile of pdfFiles) {
+      fs.unlinkSync(pdfFile);
+    }
+  }
 }
 
-const main = async (startUrl, recursive) => {
-  baseUrl = startUrl;
+async function main(
+  startUrl,
+  {
+    recursive,
+    outputFileName: outputFileName_,
+    outputDir: outputDir_,
+    keepTemp: keepTemp_,
+    baseUrl: baseUrl_,
+    inflate: inflate_,
+  }
+) {
+  if (baseUrl_) {
+    baseUrl = baseUrl_;
+  } else {
+    baseUrl = startUrl;
+  }
+  outputFileName = outputFileName_;
+  outputDir = outputDir_;
+  keepTemp = keepTemp_;
   maxDepth = recursive ? 100 : 0;
+  inflate = inflate_;
   await startScrape(startUrl);
   console.log(`Start downloading page ...`);
   ensureDirectoryExists(outputDir);
@@ -147,7 +186,7 @@ const main = async (startUrl, recursive) => {
   await mergePdfs(pdfFiles);
   // For PDF merging, you might need to use an external tool or library
   // Code for merging PDFs and cleaning up individual PDFs goes here
-};
+}
 
 const argv = yargs(process.argv.slice(2)).options({
   url: {
@@ -155,11 +194,46 @@ const argv = yargs(process.argv.slice(2)).options({
     demandOption: true,
     describe: "URL of the webpage to convert",
   },
+  outputFileName: {
+    type: "string",
+    demandOption: false,
+    default: "output.pdf",
+    describe: "Filename of the pdf file to write to",
+  },
+  outputDir: {
+    type: "string",
+    demandOption: false,
+    default: "./output",
+    describe: "Directory where temporary pdf files are created",
+  },
   recursive: {
     type: "boolean",
     default: false,
     describe: "Recursively follow links",
   },
+  keepTemp: {
+    type: "boolean",
+    default: false,
+    describe: "Recursively follow links",
+  },
+  baseUrl: {
+    type: "string",
+    demandOption: false,
+    describe: "Base url to use for relative links",
+  },
+  inflate: {
+    type: "boolean",
+    default: false,
+    describe:
+      "Inflate pages so javascript is rendered. Use this if it is a single page app",
+  },
 }).argv;
 
-main(argv.url, argv.recursive);
+main(argv.url, {
+  recursive: argv.recursive,
+  outputFileName: argv.outputFileName,
+  outputDir: argv.outputDir,
+  keepTemp: argv.keepTemp,
+  baseUrl: argv.baseUrl,
+  inflate: argv.inflate,
+});

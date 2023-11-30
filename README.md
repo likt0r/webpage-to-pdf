@@ -5,3 +5,4 @@ Script to create a pdf out of a website
 ```bash
 ./web2pdf --recursive --url https://example.com
 ```
+
