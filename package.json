@@ -1,0 +1,18 @@
+{
+  "name": "webpage-to-pdf",
+  "version": "1.0.0",
+  "description": "script to download a webpage to pdf",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "likt0r",
+  "license": "MIT",
+  "dependencies": {
+    "async": "^3.2.5",
+    "axios": "^1.6.2",
+    "cheerio": "^1.0.0-rc.12",
+    "puppeteer": "^21.5.2",
+    "yargs": "^17.7.2"
+  }
+}
